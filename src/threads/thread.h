@@ -5,6 +5,9 @@
 #include <list.h>
 #include <stdint.h>
 
+/* Forward declaration to avoid circular dependency with threads/synch.h */
+struct lock;
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -23,6 +26,11 @@ typedef int tid_t;
 #define PRI_MIN 0                       /* Lowest priority. */
 #define PRI_DEFAULT 31                  /* Default priority. */
 #define PRI_MAX 63                      /* Highest priority. */
+
+/* 4.4BSD Scheduler defaults. */
+#define NICE_DEFAULT 0
+#define RECENT_CPU_DEFAULT 0
+#define LOAD_AVG_DEFAULT 0
 
 /* A kernel thread or user process.
 
@@ -87,9 +95,17 @@ struct thread
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
-    int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
+    int priority;                       /* Current effective priority. */
+    int base_priority;                  /* Base priority before donations. */
+    struct list locks_held;             /* Locks held by this thread. */
+    struct lock *wait_on_lock;          /* Lock this thread is blocked on. */
+    int64_t wakeup_tick;                /* Tick count to wake up from sleep. */
 
+    /* Advanced Scheduler (MLFQS). */
+    int nice;                           /* Nice value (-20 to 20). */
+    int recent_cpu;                     /* Fixed-point recent CPU usage. */
+
+    struct list_elem allelem;           /* List element for all threads list. */
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
 
@@ -101,6 +117,22 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+/* Priority helper functions. */
+bool thread_priority_less (const struct list_elem *a,
+                           const struct list_elem *b,
+                           void *aux);
+void test_max_priority (void);
+
+/* MLFQS recalculation functions used across timer and scheduler. */
+void mlfqs_calculate_priority (struct thread *t);
+void mlfqs_calculate_recent_cpu (struct thread *t);
+void mlfqs_calculate_load_avg (void);
+void mlfqs_recalculate_all (void);
+
+/* Global structures shared across thread.c and timer.c */
+extern struct list all_list;
+extern struct thread *idle_thread;
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

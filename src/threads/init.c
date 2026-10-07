@@ -70,6 +70,92 @@ static void locate_block_devices (void);
 static void locate_block_device (enum block_type, const char *name);
 #endif
 
+/* Helper: Read a single line of input from the console */
+static void
+shell_readline (char *buf, size_t size)
+{
+  size_t i = 0;
+  while (i < size - 1)
+    {
+      uint8_t c = input_getc ();
+
+      /* Enter / Return */
+      if (c == '\r' || c == '\n')
+        {
+          putchar ('\n');
+          break;
+        }
+      /* Backspace or Delete */
+      else if (c == '\b' || c == 127)
+        {
+          if (i > 0)
+            {
+              i--;
+              printf ("\b \b");
+            }
+        }
+      /* Printable ASCII characters */
+      else if (c >= 32 && c <= 126)
+        {
+          buf[i++] = c;
+          putchar (c);
+        }
+    }
+  buf[i] = '\0';
+}
+
+/* Interactive kernel shell implementation */
+static void
+run_interactive_shell (void)
+{
+  char cmd[128];
+
+  while (true)
+    {
+      printf ("CS2042> ");
+      shell_readline (cmd, sizeof (cmd));
+
+      /* Ignore blank enter */
+      if (strlen (cmd) == 0)
+        continue;
+
+      if (!strcmp (cmd, "whoami"))
+        {
+          /* Adjust with your name and student registration/index number */
+          printf ("Nandun Jayasekara 240271U - CS2042\n");
+        }
+      else if (!strcmp (cmd, "shutdown"))
+        {
+          shutdown_power_off ();
+        }
+      else if (!strcmp (cmd, "time"))
+        {
+          printf ("%ld seconds\n", (long) rtc_get_time ());
+        }
+      else if (!strcmp (cmd, "ram"))
+        {
+          printf ("%"PRIu32" kB\n", init_ram_pages * PGSIZE / 1024);
+        }
+      else if (!strcmp (cmd, "thread"))
+        {
+          thread_print_stats ();
+        }
+      else if (!strcmp (cmd, "priority"))
+        {
+          printf ("Current thread priority: %d\n", thread_get_priority ());
+        }
+      else if (!strcmp (cmd, "exit"))
+        {
+          printf ("Exiting interactive shell... Bye!\n");
+          break;
+        }
+      else
+        {
+          printf ("Unknown command: %s\n", cmd);
+        }
+    }
+}
+
 int pintos_init (void) NO_RETURN;
 
 /* Pintos main entry point. */
@@ -93,7 +179,7 @@ pintos_init (void)
   /* Greet user. */
   printf ("Pintos booting with %'"PRIu32" kB RAM...\n",
           init_ram_pages * PGSIZE / 1024);
-
+  printf ("\n*** Hello from Pintos Kernel on QEMU! ***\n\n");
   /* Initialize memory system. */
   palloc_init (user_page_limit);
   malloc_init ();
@@ -133,14 +219,14 @@ pintos_init (void)
     /* Run actions specified on kernel command line. */
     run_actions (argv);
   } else {
-    // TODO: no command line passed to kernel. Run interactively 
+    run_interactive_shell ();
   }
 
   /* Finish up. */
   shutdown ();
   thread_exit ();
 }
-
+
 /* Clear the "BSS", a segment that should be initialized to
    zeros.  It isn't actually stored on disk or zeroed by the
    kernel loader, so we have to zero it ourselves.
@@ -430,4 +516,4 @@ locate_block_device (enum block_type role, const char *name)
       block_set_role (role, block);
     }
 }
-#endif
+#endif /* FILESYS */

@@ -1,5 +1,9 @@
 # Pintos helper subroutines.
 
+use strict;
+use warnings;
+use POSIX;
+
 # Number of bytes available for the loader at the beginning of the MBR.
 # Kernel command-line arguments follow the loader.
 our $LOADER_SIZE = 314;
@@ -14,34 +18,14 @@ my (%type2role) = reverse %role2type;
 # Order of roles within a given disk.
 our (@role_order) = qw (KERNEL FILESYS SCRATCH SWAP);
 
+# Geometry and partition alignment
+our (%geometry);
+our ($align);
+
 # Partitions.
-#
-# Valid keys are KERNEL, FILESYS, SCRATCH, SWAP.  Only those
-# partitions which are in use are included.
-#
-# Each value is a reference to a hash.  If the partition's contents
-# are to be obtained from a file (that will be copied into a new
-# virtual disk), then the hash contains:
-#
-# FILE => name of file from which the partition's contents are copied
-#         (perhaps "/dev/zero"),
-# OFFSET => offset in bytes in FILE,
-# BYTES => size in bytes of contents from FILE,
-#
-# If the partition is taken from a virtual disk directly, then it
-# contains the following.  The same keys are also filled in once a
-# file-based partition has been copied into a new virtual disk:
-#
-# DISK => name of virtual disk file,
-# START => sector offset of start of partition within DISK,
-# SECTORS => number of sectors of partition within DISK, which is usually
-#            greater than round_up (BYTES, 512) due to padding.
 our (%parts);
 
 # set_part($opt, $arg)
-#
-# For use as a helper function for Getopt::Long::GetOptions to set
-# disk sources.
 sub set_part {
   my ($opt, $arg) = @_;
   my ($role, $source) = $opt =~ /^([a-z]+)(?:-([a-z]+))?/ or die;
@@ -56,10 +40,6 @@ sub set_part {
 }
 
 # do_set_part($role, $source, $arg)
-#
-# Sets partition $role as coming from $source (one of 'file', 'from',
-# or 'size').  $arg is a file name for 'file' or 'from', a size in
-# megabytes for 'size'.
 sub do_set_part {
   my ($role, $source, $arg) = @_;
 
@@ -93,10 +73,6 @@ sub do_set_part {
 }
 
 # set_geometry('HEADS,SPT')
-# set_geometry('zip')
-#
-# For use as a helper function for Getopt::Long::GetOptions to set
-# disk geometry.
 sub set_geometry {
   local ($_) = $_[1];
   if ($_ eq 'zip') {
@@ -110,9 +86,6 @@ sub set_geometry {
 }
 
 # set_align('bochs|full|none')
-#
-# For use as a helper function for Getopt::Long::GetOptions to set
-# partition alignment.
 sub set_align {
   $align = $_[1];
   die "unknown alignment type \"$align\"\n"
@@ -120,31 +93,6 @@ sub set_align {
 }
 
 # assemble_disk(%args)
-#
-# Creates a virtual disk $args{DISK} containing the partitions
-# described by @args{KERNEL, FILESYS, SCRATCH, SWAP}.
-#
-# Required arguments:
-#   DISK => output disk file name
-#   HANDLE => output file handle (will be closed)
-#
-# Normally at least one of the following is included:
-#   KERNEL, FILESYS, SCRATCH, SWAP => {input:
-#				       FILE => file to read,
-#                                      OFFSET => byte offset in file,
-#                                      BYTES => byte count from file,
-#
-#                                      output:
-#				       DISK => output disk file name,
-#                                      START => sector offset in DISK,
-#                                      SECTORS => sector count in DISK},
-#
-# Optional arguments:
-#   ALIGN => 'bochs' (default), 'full', or 'none'
-#   GEOMETRY => {H => heads, S => sectors per track} (default 16, 63)
-#   FORMAT => 'partitioned' (default) or 'raw'
-#   LOADER => $LOADER_SIZE-byte string containing the loader binary
-#   ARGS => ['arg 1', 'arg 2', ...]
 sub assemble_disk {
   my (%args) = @_;
 
@@ -167,7 +115,7 @@ sub assemble_disk {
   my ($format) = $args{FORMAT} || 'partitioned';
   die if $format ne 'partitioned' && $format ne 'raw';
 
-  # Check that we have apartitions to copy in.
+  # Check that we have partitions to copy in.
   my $part_cnt = grep (defined ($args{$_}), keys %role2type);
   die "must have exactly one partition for raw output\n"
   if $format eq 'raw' && $part_cnt != 1;
@@ -238,9 +186,6 @@ sub assemble_disk {
 }
 
 # make_partition_table({H => heads, S => sectors}, {KERNEL => ..., ...})
-#
-# Creates and returns a partition table for the given partitions and
-# disk geometry.
 sub make_partition_table {
   my ($geometry, $partitions) = @_;
   my ($table) = '';
@@ -250,21 +195,18 @@ sub make_partition_table {
     my $end = $p->{START} + $p->{SECTORS} - 1;
     my $bootable = $role eq 'KERNEL';
 
-    $table .= pack ("C", $bootable ? 0x80 : 0);   # Bootable?
-    $table .= pack_chs ($p->{START}, $geometry);  # CHS of partition start
-    $table .= pack ("C", $role2type{$role});      # Partition type
-    $table .= pack_chs($end, $geometry);          # CHS of partition end
-    $table .= pack ("V", $p->{START});            # LBA of partition start
-    $table .= pack ("V", $p->{SECTORS});          # Length in sectors
+    $table .= pack ("C", $bootable ? 0x80 : 0);
+    $table .= pack_chs ($p->{START}, $geometry);
+    $table .= pack ("C", $role2type{$role});
+    $table .= pack_chs($end, $geometry);
+    $table .= pack ("V", $p->{START});
+    $table .= pack ("V", $p->{SECTORS});
     die if length ($table) % 16;
   }
   return pack ("a64", $table);
 }
 
 # make_kernel_command_line(@args)
-#
-# Returns the raw bytes to write to an MBR at offset $LOADER_SIZE to
-# set a Pintos kernel command line.
 sub make_kernel_command_line {
   my (@args) = @_;
   my ($args) = join ('', map ("$_\0", @args));
@@ -273,9 +215,6 @@ sub make_kernel_command_line {
 }
 
 # copy_file($from_handle, $from_file_name, $to_handle, $to_file_name, $size)
-#
-# Copies $size bytes from $from_handle to $to_handle.
-# $from_file_name and $to_file_name are used in error messages.
 sub copy_file {
   my ($from_handle, $from_file_name, $to_handle, $to_file_name, $size) = @_;
 
@@ -290,9 +229,6 @@ sub copy_file {
 }
 
 # read_fully($handle, $file_name, $bytes)
-#
-# Reads exactly $bytes bytes from $handle and returns the data read.
-# $file_name is used in error messages.
 sub read_fully {
   my ($handle, $file_name, $bytes) = @_;
   my ($data);
@@ -303,9 +239,6 @@ sub read_fully {
 }
 
 # write_fully($handle, $file_name, $data)
-#
-# Write $data to $handle.
-# $file_name is used in error messages.
 sub write_fully {
   my ($handle, $file_name, $data) = @_;
   my ($written_bytes) = syswrite ($handle, $data);
@@ -326,37 +259,24 @@ sub write_zeros {
 }
 
 # div_round_up($x,$y)
-#
-# Returns $x / $y, rounded up to the nearest integer.
-# $y must be an integer.
 sub div_round_up {
   my ($x, $y) = @_;
   return int ((ceil ($x) + $y - 1) / $y);
 }
 
 # round_up($x, $y)
-#
-# Returns $x rounded up to the nearest multiple of $y.
-# $y must be an integer.
 sub round_up {
   my ($x, $y) = @_;
   return div_round_up ($x, $y) * $y;
 }
 
 # cyl_sectors(H => heads, S => sectors)
-#
-# Returns the number of sectors in a cylinder of a disk with the given
-# geometry.
 sub cyl_sectors {
   my (%geometry) = @_;
   return $geometry{H} * $geometry{S};
 }
 
 # read_loader($file_name)
-#
-# Reads and returns the first $LOADER_SIZE bytes in $file_name.
-# If $file_name is undefined, tries to find the default loader.
-# Makes sure that the loader is a reasonable size.
 sub read_loader {
   my ($name) = @_;
   $name = find_file ("loader.bin") if !defined $name;
@@ -366,16 +286,12 @@ sub read_loader {
   open ($handle, '<', $name) or die "$name: open: $!\n";
   -s $handle == $LOADER_SIZE || -s $handle == 512
     or die "$name: must be exactly $LOADER_SIZE or 512 bytes long\n";
-  $loader = read_fully ($handle, $name, $LOADER_SIZE);
+  my $loader = read_fully ($handle, $name, $LOADER_SIZE);
   close ($handle) or die "$name: close: $!\n";
   return $loader;
 }
 
 # pack_chs($lba, {H => heads, S => sectors})
-#
-# Converts logical sector $lba to a 3-byte packed geometrical sector
-# in the format used in PC partition tables (see [Partitions]) and
-# returns the geometrical sector as a 3-byte string.
 sub pack_chs {
   my ($lba, $geometry) = @_;
   my ($cyl, $head, $sect) = lba_to_chs ($lba, $geometry);
@@ -383,35 +299,25 @@ sub pack_chs {
 }
 
 # lba_to_chs($lba, {H => heads, S => sectors})
-#
-# Returns the geometrical sector corresponding to logical sector $lba
-# given the specified geometry.
 sub lba_to_chs {
   my ($lba, $geometry) = @_;
   my ($hpc) = $geometry->{H};
   my ($spt) = $geometry->{S};
 
-  # Source:
-  # http://en.wikipedia.org/wiki/CHS_conversion
   use integer;
   my $cyl = $lba / ($hpc * $spt);
   my $temp = $lba % ($hpc * $spt);
   my $head = $temp / $spt;
   my $sect = $temp % $spt + 1;
 
-  # Source:
-  # http://www.cgsecurity.org/wiki/Intel_Partition_Table
   if ($cyl <= 1023) {
     return ($cyl, $head, $sect);
   } else {
-    return (1023, 254, 63);	## or should this be (1023, $hpc, $spt)?
+    return (1023, 254, 63);
   }
 }
 
 # read_mbr($file)
-#
-# Tries to read an MBR from $file.  Returns the 512-byte MBR if
-# successful, otherwise numeric 0.
 sub read_mbr {
   my ($file) = @_;
   my ($retval) = 0;
@@ -428,13 +334,10 @@ sub read_mbr {
 }
 
 # interpret_partition_table($mbr, $disk)
-#
-# Parses the partition-table in the specified 512-byte $mbr and
-# returns the partitions.  $disk is used for error messages.
 sub interpret_partition_table {
   my ($mbr, $disk) = @_;
   my (%parts);
-  for my $i (0...3) {
+  for my $i (0..3) {
     my ($bootable, $valid, $type, $lba_start, $lba_length)
     = unpack ("C X V C x3 V V", substr ($mbr, 446 + 16 * $i, 16));
     next if !$valid;
@@ -457,19 +360,30 @@ sub interpret_partition_table {
 }
 
 # find_file($base_name)
-#
-# Looks for a file named $base_name in a couple of likely spots.  If
-# found, returns the name; otherwise, returns undef.
 sub find_file {
   my ($base_name) = @_;
-  -e && return $_ foreach $base_name, "build/$base_name";
+  my @locations = (
+    $base_name,
+    "build/$base_name",
+    "../build/$base_name",
+    "../../threads/build/$base_name",
+    "../../userprog/build/$base_name",
+    "../../vm/build/$base_name",
+    "../../filesys/build/$base_name"
+  );
+
+  if (exists $ENV{PINTOS_HOME}) {
+    push @locations, "$ENV{PINTOS_HOME}/src/threads/build/$base_name";
+    push @locations, "$ENV{PINTOS_HOME}/src/userprog/build/$base_name";
+  }
+
+  foreach my $loc (@locations) {
+    return $loc if -e $loc;
+  }
   return undef;
 }
 
 # read_partition_table($file)
-#
-# Reads a partition table from $file and returns the parsed
-# partitions.  Dies if partitions can't be read.
 sub read_partition_table {
   my ($file) = @_;
   my ($mbr) = read_mbr ($file);
@@ -478,8 +392,6 @@ sub read_partition_table {
 }
 
 # max(@args)
-#
-# Returns the numerically largest value in @args.
 sub max {
   my ($max) = $_[0];
   foreach (@_[1..$#_]) {

@@ -1,0 +1,28 @@
+{
+    "configurations": [
+        {
+            "name": "Pintos Ubuntu",
+            "includePath": [
+                "${workspaceFolder}/src",
+                "${workspaceFolder}/src/lib",
+                "${workspaceFolder}/src/lib/kernel",
+                "${workspaceFolder}/src/lib/user",
+                "${workspaceFolder}/src/threads",
+                "${workspaceFolder}/src/devices",
+                "${workspaceFolder}/src/userprog",
+                "${workspaceFolder}/src/filesys",
+                "${workspaceFolder}/src/vm"
+            ],
+            "defines": [
+                "THREADS",
+                "USERPROG",
+                "FILESYS"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu99",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "linux-gcc-x86"
+        }
+    ],
+    "version": 4
+}
